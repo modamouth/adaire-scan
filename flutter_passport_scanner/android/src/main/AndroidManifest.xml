@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  package="com.example.flutter_passport_scanner">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+
+</manifest>

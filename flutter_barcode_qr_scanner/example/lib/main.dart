@@ -32,7 +32,8 @@ class _MyAppState extends State<MyApp> {
     // Platform messages may fail, so we use a try/catch PlatformException.
     // We also handle the message potentially returning null.
     try {
-      platformVersion = await _scanner.getPlatformVersion() ?? 'Unknown platform version';
+      platformVersion =
+          await _scanner.getPlatformVersion() ?? 'Unknown platform version';
     } on PlatformException {
       platformVersion = 'Failed to get platform version.';
     }
@@ -51,9 +52,7 @@ class _MyAppState extends State<MyApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       home: Scaffold(
-        appBar: AppBar(
-          title: const Text('Plugin example app'),
-        ),
+        appBar: AppBar(title: const Text('Plugin example app')),
         body: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -65,8 +64,10 @@ class _MyAppState extends State<MyApp> {
                 onPressed: () async {
                   try {
                     final res = await _scanner.scan();
+                    if (!context.mounted) return;
                     setState(() => _lastResult = res);
                   } on PlatformException catch (e) {
+                    if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(content: Text('Scan failed: ${e.message}')),
                     );

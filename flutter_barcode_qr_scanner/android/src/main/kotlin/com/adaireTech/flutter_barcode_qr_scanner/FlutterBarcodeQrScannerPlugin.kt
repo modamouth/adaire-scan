@@ -25,18 +25,31 @@ class FlutterBarcodeQrScannerPlugin :
     private val activityResultListener = object : ActivityResultListener {
         override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
             if (requestCode != REQUEST_CODE) return false
-            val current = pendingResult ?: return true
-            if (resultCode == Activity.RESULT_OK && data != null) {
-                val value = data.getStringExtra(SimpleScanActivity.EXTRA_VALUE)
-                val type = data.getStringExtra(SimpleScanActivity.EXTRA_TYPE)
-                current.success(hashMapOf(
-                    "value" to value,
-                    "type" to type
-                ))
+            if (pendingResult == null) return true
+
+            val outcome = data?.getStringExtra(SimpleScanActivity.EXTRA_OUTCOME)
+            if (resultCode == Activity.RESULT_OK && outcome == OUTCOME_SUCCESS) {
+                val value = data?.getStringExtra(SimpleScanActivity.EXTRA_VALUE)
+                val type = data?.getStringExtra(SimpleScanActivity.EXTRA_TYPE)
+                if (value.isNullOrEmpty() || type !in SUPPORTED_FORMATS) {
+                    complete(outcome(OUTCOME_FAILURE, "malformed_activity_result"))
+                } else {
+                    complete(hashMapOf(
+                        "outcome" to OUTCOME_SUCCESS,
+                        "value" to value,
+                        "type" to type
+                    ))
+                }
             } else {
-                current.success(null)
+                val terminalOutcome = when (outcome) {
+                    OUTCOME_CANCELLED -> OUTCOME_CANCELLED
+                    OUTCOME_PERMISSION_DENIED -> OUTCOME_PERMISSION_DENIED
+                    OUTCOME_UNAVAILABLE -> OUTCOME_UNAVAILABLE
+                    OUTCOME_FAILURE -> OUTCOME_FAILURE
+                    else -> OUTCOME_CANCELLED
+                }
+                complete(outcome(terminalOutcome))
             }
-            pendingResult = null
             return true
         }
     }
@@ -51,32 +64,68 @@ class FlutterBarcodeQrScannerPlugin :
             "getPlatformVersion" -> result.success("Android ${android.os.Build.VERSION.RELEASE}")
             "scan" -> {
                 if (pendingResult != null) {
-                    result.error("ALREADY_ACTIVE", "A scan is already in progress", null)
+                    result.success(outcome(OUTCOME_BUSY))
                     return
                 }
                 val act = activity
                 if (act == null) {
-                    result.error("NO_ACTIVITY", "No foreground activity to start scanner", null)
+                    result.success(outcome(OUTCOME_UNAVAILABLE, "no_activity"))
                     return
                 }
-                pendingResult = result
-                val formatsArg = call.argument<List<String>>("formats")
-                val intent = Intent(act, SimpleScanActivity::class.java)
-                if (!formatsArg.isNullOrEmpty()) {
-                    intent.putStringArrayListExtra(SimpleScanActivity.EXTRA_FORMATS, ArrayList(formatsArg))
+
+                val formatsArg = call.argument<List<*>>("formats")
+                val formats = formatsArg?.filterIsInstance<String>()
+                if (formatsArg == null ||
+                    formats == null ||
+                    formats.size != formatsArg.size ||
+                    formats.isEmpty() ||
+                    formats.any { it !in SUPPORTED_FORMATS }
+                ) {
+                    result.success(outcome(OUTCOME_FAILURE, "invalid_formats"))
+                    return
                 }
-                act.startActivityForResult(intent, REQUEST_CODE)
+
+                pendingResult = result
+                val intent = Intent(act, SimpleScanActivity::class.java)
+                intent.putStringArrayListExtra(
+                    SimpleScanActivity.EXTRA_FORMATS,
+                    ArrayList(formats.distinct())
+                )
+                try {
+                    act.startActivityForResult(intent, REQUEST_CODE)
+                } catch (_: Throwable) {
+                    complete(outcome(OUTCOME_UNAVAILABLE, "launch_failed"))
+                }
             }
             else -> result.notImplemented()
         }
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        complete(outcome(OUTCOME_UNAVAILABLE, "engine_detached"))
         channel.setMethodCallHandler(null)
     }
 
     companion object {
         private const val REQUEST_CODE = 0xB17C // arbitrary
+        private const val OUTCOME_SUCCESS = "success"
+        private const val OUTCOME_CANCELLED = "cancelled"
+        private const val OUTCOME_PERMISSION_DENIED = "permission_denied"
+        private const val OUTCOME_UNAVAILABLE = "unavailable"
+        private const val OUTCOME_BUSY = "busy"
+        private const val OUTCOME_FAILURE = "failure"
+        private val SUPPORTED_FORMATS = setOf("qr", "ean13", "code128")
+    }
+
+    private fun outcome(value: String, diagnosticCode: String? = null): HashMap<String, String> =
+        hashMapOf<String, String>("outcome" to value).apply {
+            if (diagnosticCode != null) put("diagnosticCode", diagnosticCode)
+        }
+
+    private fun complete(envelope: Map<String, Any?>) {
+        val current = pendingResult ?: return
+        pendingResult = null
+        current.success(envelope)
     }
 
     // ActivityAware
@@ -87,6 +136,7 @@ class FlutterBarcodeQrScannerPlugin :
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
+        complete(outcome(OUTCOME_UNAVAILABLE, "activity_detached"))
         activityBinding?.removeActivityResultListener(activityResultListener)
         activityBinding = null
         activity = null
@@ -99,6 +149,7 @@ class FlutterBarcodeQrScannerPlugin :
     }
 
     override fun onDetachedFromActivity() {
+        complete(outcome(OUTCOME_UNAVAILABLE, "activity_detached"))
         activityBinding?.removeActivityResultListener(activityResultListener)
         activityBinding = null
         activity = null

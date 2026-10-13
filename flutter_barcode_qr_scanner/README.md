@@ -6,23 +6,24 @@ If you're only integrating the plugin into an app, use the example app in `examp
 
 ## What this plugin does
 
-`flutter_barcode_qr_scanner` is a Flutter **federated-style plugin** (platform interface + method channel + native implementations) that:
+`flutter_barcode_qr_scanner` is a private-source Flutter plugin candidate that:
 
 - Presents a **native full-screen** scanner UI.
-- Returns the **first** detected code.
+- Returns the **first** detected code through a typed terminal outcome.
 - Normalizes the returned result into a Dart `ScanResult` with:
   - `value`: decoded payload
   - `type`: normalized `BarcodeFormat` enum
 
-Native implementations:
+Phase 2 supported implementation:
 
 - Android: ZXing Embedded (`com.journeyapps:zxing-android-embedded`) with a lightweight Kotlin `Activity`.
-- iOS: AVFoundation camera capture + metadata output in Swift.
 
-Supported runtime platforms:
+Private-evaluation scope:
 
-- Android (minSdk 24)
-- iOS (iOS 13+)
+- Android only. The candidate compiles with `minSdk 24`, but current physical-device evidence is limited to the recorded test matrix.
+- QR, EAN-13, and Code 128 only.
+- iOS source remains in the repository but is not implemented, verified, or supported by this increment.
+- This package is not approved for public distribution or production claims.
 
 ## Repository layout
 
@@ -53,10 +54,8 @@ Call path when Dart code invokes `scan()`:
 4. Sends `MethodChannel('flutter_barcode_qr_scanner')` method call:
    - method: `scan`
    - args: `{ "formats": ["qr", "ean13", ...] }` (optional)
-5. Native platform returns either:
-   - `null` (canceled / permission denied)
-   - a map `{ "value": String, "type": String }`
-6. Dart converts map to `ScanResult` via `ScanResult.fromMap`
+5. Android returns one terminal envelope with `outcome`.
+6. Dart validates the envelope and returns a typed `ScanOutcome`.
 
 ### Method-channel contract
 
@@ -67,43 +66,62 @@ Channel name:
 Supported methods:
 
 - `getPlatformVersion` -> `String?`
-- `scan` (optional `formats: List<String>`) -> `Map<String, dynamic>?`
+- `scan` (`formats: List<String>`) -> `Map<String, dynamic>`
 
-Native return map shape:
+Successful native envelope:
 
 ```json
-{ "value": "...", "type": "qr" }
+{ "outcome": "success", "value": "...", "type": "qr" }
 ```
+
+Non-success envelopes contain no decoded payload:
+
+```json
+{ "outcome": "permission_denied" }
+```
+
+Valid outcomes are `success`, `cancelled`, `permission_denied`, `unavailable`, `busy`, and `failure`.
 
 ## Key behaviors to know when developing
 
-### Cancellation and “no result”
+### Typed outcomes
 
-This plugin uses `null` as the “no result” signal.
+`FlutterBarcodeQrScanner.scan()` returns `ScanOutcome`. Handle its `type` without parsing messages:
 
-`scan()` resolves to `null` when:
+```dart
+final outcome = await FlutterBarcodeQrScanner().scan(
+  formats: const [BarcodeFormat.qr],
+);
 
-- The user cancels the scanner UI.
-- The user denies camera permission.
-- The scanner cannot be presented (for example, no root view controller on iOS).
+switch (outcome.type) {
+  case ScanOutcomeType.success:
+    final result = outcome.result!;
+    // Treat result.value as sensitive inert data.
+    return;
+  case ScanOutcomeType.cancelled:
+    break;
+  case ScanOutcomeType.permissionDenied:
+    // Offer a settings recovery path.
+    return;
+  case ScanOutcomeType.unavailable:
+  case ScanOutcomeType.busy:
+  case ScanOutcomeType.failure:
+    // Present an appropriate payload-free recovery message.
+    return;
+}
+```
+
+Decoded values are intentionally excluded from `ScanResult.toString()` and `ScanOutcome.toString()`. Applications must not log, persist, transmit, open, or execute values automatically.
 
 ### Concurrency
 
-The plugin rejects concurrent scans.
-
-If `scan()` is invoked while another scan is in progress, native code throws a `PlatformException` with:
-
-- code: `ALREADY_ACTIVE`
-
-Android can also throw:
-
-- code: `NO_ACTIVITY` (no foreground activity to launch the scanner activity)
+The plugin returns `ScanOutcomeType.busy` for a concurrent scan. Missing activity and launch problems return `ScanOutcomeType.unavailable`. Expected outcomes do not require `PlatformException` message parsing.
 
 ## Barcode format model (and how to extend it)
 
 ### Dart: `BarcodeFormat`
 
-The canonical keys are the Dart enum names (e.g. `qr`, `ean13`, `code128`).
+The approved Android keys are `qr`, `ean13`, and `code128`. Omitting `formats` selects exactly that set. An empty list or any unsupported format fails before launch and never broadens scanning.
 
 To add a new format:
 
@@ -119,18 +137,7 @@ Android maps keys in `android/src/main/kotlin/.../SimpleScanActivity.kt`:
 
 If you add a new Dart enum value, you must update both functions.
 
-### iOS: key <-> AVFoundation mapping
-
-iOS maps keys in `ios/Classes/FlutterBarcodeQrScannerPlugin.swift`:
-
-- `keyToType(key)` converts Dart keys to `AVMetadataObject.ObjectType`
-- `typeToKey(type)` converts AVFoundation type back to Dart key
-
-Important: some Dart keys do not have AVFoundation equivalents. Today:
-
-- `upca` and `codabar` exist on the Dart side, but are not mapped on iOS.
-
-If you extend format support, keep Android/iOS parity in mind and document any platform gaps.
+Formats outside the approved set remain legacy enum values and are rejected by the Phase 2 scan entry point. Adding a format requires a separate evidence-backed contract decision and mapping tests.
 
 ## Local development
 
@@ -138,7 +145,6 @@ If you extend format support, keep Android/iOS parity in mind and document any p
 
 - Flutter SDK matching the repo constraints (`sdk: ^3.9.2`, Flutter `>=3.3.0`).
 - Android: Android Studio + an emulator/device.
-- iOS: Xcode + a real device or simulator (camera availability varies).
 
 ### Get dependencies
 
@@ -158,10 +164,7 @@ flutter pub get
 flutter run
 ```
 
-Tips:
-
-- For iOS, ensure the example app’s `Info.plist` contains `NSCameraUsageDescription`.
-- Prefer a real device for camera scanning.
+Use a real Android device for camera, permission, lifecycle, torch, and TalkBack evidence. A successful build or emulator run does not substitute for physical-device evidence.
 
 ### Run Dart tests (plugin)
 
@@ -207,25 +210,14 @@ If you prefer an IDE workflow, open `example/android/` in Android Studio and run
   - Requests `Manifest.permission.CAMERA` at runtime.
   - Returns canceled if permission is denied.
 
-### iOS scanner UI
-
-- Uses `AVCaptureSession` + `AVCaptureMetadataOutput`.
-- Permission flow:
-  - Uses `AVCaptureDevice.requestAccess(for: .video)`.
-  - Returns canceled if permission is denied.
-
-## iOS privacy manifest note
-
-This repo includes `ios/Resources/PrivacyInfo.xcprivacy`, but the podspec currently does **not** bundle it (the `resource_bundles` line is commented).
-
-If you introduce any APIs that require Apple privacy manifest declarations, update the `.xcprivacy` file and enable bundling in `ios/flutter_barcode_qr_scanner.podspec`.
-
 ## Release checklist (internal)
 
 - Update `pubspec.yaml` version.
 - Update `CHANGELOG.md` with real release notes.
 - Run `flutter test`.
-- Smoke-test the example on Android + iOS.
+- Execute the approved Android physical-device, privacy, accessibility, and clean-host matrix.
+- Record Architect, QA, Security, UX/UI, and Product Owner decisions.
+- Obtain a separate human decision before external distribution.
 
 ## Where to look first
 
@@ -233,5 +225,4 @@ If you introduce any APIs that require Apple privacy manifest declarations, upda
 - Method-channel glue: `lib/flutter_barcode_qr_scanner_method_channel.dart`
 - Android entrypoint: `android/src/main/kotlin/.../FlutterBarcodeQrScannerPlugin.kt`
 - Android scanner UI: `android/src/main/kotlin/.../SimpleScanActivity.kt`
-- iOS implementation: `ios/Classes/FlutterBarcodeQrScannerPlugin.swift`
-
+- Phase 2 contract ADR: the agentic-dev-team repository decision `0011`

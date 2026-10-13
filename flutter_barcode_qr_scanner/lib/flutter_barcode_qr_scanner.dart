@@ -22,6 +22,22 @@ enum BarcodeFormat {
   unknown,
 }
 
+/// Formats approved for the Android private-evaluation candidate.
+const Set<BarcodeFormat> supportedBarcodeFormats = <BarcodeFormat>{
+  BarcodeFormat.qr,
+  BarcodeFormat.ean13,
+  BarcodeFormat.code128,
+};
+
+enum ScanOutcomeType {
+  success,
+  cancelled,
+  permissionDenied,
+  unavailable,
+  busy,
+  failure,
+}
+
 String _formatToKey(BarcodeFormat f) => f.name;
 
 BarcodeFormat barcodeFormatFromKey(String? key) {
@@ -64,14 +80,104 @@ class ScanResult {
   const ScanResult({required this.value, required this.type});
 
   @override
-  String toString() => 'ScanResult(value: $value, type: ${type.name})';
+  String toString() => 'ScanResult(type: ${type.name}, value: <redacted>)';
+}
 
-  static ScanResult? fromMap(Map<String, dynamic>? map) {
-    if (map == null) return null;
-    final value = map['value']?.toString();
-    if (value == null) return null;
-    final type = barcodeFormatFromKey(map['type']?.toString());
-    return ScanResult(value: value, type: type);
+/// One terminal result from a scan attempt.
+///
+/// Decoded content is available only through [result] after [type] is
+/// [ScanOutcomeType.success]. Diagnostic codes are stable machine-readable
+/// identifiers and never include decoded content.
+class ScanOutcome {
+  final ScanOutcomeType type;
+  final ScanResult? result;
+  final String? diagnosticCode;
+
+  const ScanOutcome._({required this.type, this.result, this.diagnosticCode});
+
+  const ScanOutcome.success(ScanResult result)
+    : this._(type: ScanOutcomeType.success, result: result);
+
+  const ScanOutcome.cancelled() : this._(type: ScanOutcomeType.cancelled);
+
+  const ScanOutcome.permissionDenied()
+    : this._(type: ScanOutcomeType.permissionDenied);
+
+  const ScanOutcome.unavailable({String? diagnosticCode})
+    : this._(type: ScanOutcomeType.unavailable, diagnosticCode: diagnosticCode);
+
+  const ScanOutcome.busy() : this._(type: ScanOutcomeType.busy);
+
+  const ScanOutcome.failure({String? diagnosticCode})
+    : this._(type: ScanOutcomeType.failure, diagnosticCode: diagnosticCode);
+
+  bool get isSuccess => type == ScanOutcomeType.success;
+
+  @override
+  String toString() =>
+      'ScanOutcome(type: ${type.name}, diagnosticCode: $diagnosticCode, '
+      'result: ${result == null ? 'none' : '<redacted>'})';
+
+  static ScanOutcome fromMap(Map<String, dynamic>? map) {
+    if (map == null) {
+      return const ScanOutcome.failure(
+        diagnosticCode: 'malformed_native_result',
+      );
+    }
+
+    final outcome = map['outcome'];
+    if (outcome is! String) {
+      return const ScanOutcome.failure(
+        diagnosticCode: 'malformed_native_result',
+      );
+    }
+
+    switch (outcome) {
+      case 'success':
+        final value = map['value'];
+        final typeKey = map['type'];
+        if (value is! String ||
+            value.isEmpty ||
+            typeKey is! String ||
+            !supportedBarcodeFormats.contains(barcodeFormatFromKey(typeKey))) {
+          return const ScanOutcome.failure(
+            diagnosticCode: 'malformed_native_result',
+          );
+        }
+        return ScanOutcome.success(
+          ScanResult(value: value, type: barcodeFormatFromKey(typeKey)),
+        );
+      case 'cancelled':
+        return const ScanOutcome.cancelled();
+      case 'permission_denied':
+        return const ScanOutcome.permissionDenied();
+      case 'unavailable':
+        return ScanOutcome.unavailable(diagnosticCode: _diagnosticCode(map));
+      case 'busy':
+        return const ScanOutcome.busy();
+      case 'failure':
+        return ScanOutcome.failure(diagnosticCode: _diagnosticCode(map));
+      default:
+        return const ScanOutcome.failure(
+          diagnosticCode: 'malformed_native_result',
+        );
+    }
+  }
+
+  static String? _diagnosticCode(Map<String, dynamic> map) {
+    final code = map['diagnosticCode'];
+    const allowedCodes = <String>{
+      'no_activity',
+      'launch_failed',
+      'engine_detached',
+      'activity_detached',
+      'invalid_formats',
+      'malformed_activity_result',
+    };
+    if (code == null) return null;
+    return code is String && allowedCodes.contains(code)
+        ? code
+        : 'native_failure';
   }
 }
 
@@ -80,15 +186,30 @@ class FlutterBarcodeQrScanner {
     return FlutterBarcodeQrScannerPlatform.instance.getPlatformVersion();
   }
 
-  /// Opens the native scanner UI and returns the first detected barcode.
+  /// Opens the native scanner UI and returns one typed terminal outcome.
   ///
-  /// Optionally filter by [formats]. If omitted, scans all supported formats.
-  Future<ScanResult?> scan({List<BarcodeFormat>? formats}) async {
-    final formatKeys = formats?.map(_formatToKey).toList();
-    final map = await FlutterBarcodeQrScannerPlatform.instance.scan(
-      formats: formatKeys,
-    );
-    return ScanResult.fromMap(map);
+  /// If [formats] is omitted, the approved QR, EAN-13, and Code 128 set is
+  /// used. Empty or unsupported requests fail without launching the scanner.
+  Future<ScanOutcome> scan({List<BarcodeFormat>? formats}) async {
+    final requested = formats ?? supportedBarcodeFormats.toList();
+    if (requested.isEmpty) {
+      return const ScanOutcome.failure(diagnosticCode: 'invalid_formats');
+    }
+    if (requested.any((format) => !supportedBarcodeFormats.contains(format))) {
+      return const ScanOutcome.failure(diagnosticCode: 'unsupported_format');
+    }
+
+    final formatKeys = requested.map(_formatToKey).toSet().toList();
+    try {
+      final map = await FlutterBarcodeQrScannerPlatform.instance.scan(
+        formats: formatKeys,
+      );
+      return ScanOutcome.fromMap(map);
+    } on PlatformException {
+      return const ScanOutcome.failure(diagnosticCode: 'transport_failure');
+    } catch (_) {
+      return const ScanOutcome.failure(diagnosticCode: 'transport_failure');
+    }
   }
 
   /// Opens a multi-scan UI that keeps scanning until the user taps **Done**.
@@ -157,10 +278,27 @@ class _MultiBarcodeQrScannerPageState extends State<MultiBarcodeQrScannerPage> {
     });
 
     try {
-      final result = await _scanner.scan(formats: widget.formats);
+      final outcome = await _scanner.scan(formats: widget.formats);
       if (!mounted) return;
 
-      if (result == null) return;
+      if (!outcome.isSuccess) {
+        if (outcome.type != ScanOutcomeType.cancelled) {
+          final message = switch (outcome.type) {
+            ScanOutcomeType.permissionDenied => 'Camera permission denied',
+            ScanOutcomeType.unavailable => 'Scanner unavailable',
+            ScanOutcomeType.busy => 'A scan is already in progress',
+            ScanOutcomeType.failure => 'Scan failed',
+            ScanOutcomeType.cancelled => 'Scan cancelled',
+            ScanOutcomeType.success => 'Scan completed',
+          };
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(message)));
+        }
+        return;
+      }
+
+      final result = outcome.result!;
 
       final value = result.value.trim();
       if (value.isEmpty) return;

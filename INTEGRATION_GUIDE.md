@@ -159,23 +159,25 @@ import 'package:flutter_barcode_qr_scanner/flutter_barcode_qr_scanner.dart';
 final scanner = FlutterBarcodeQrScanner();
 
 Future<void> scanBarcode() async {
-  try {
-    final result = await scanner.scan(
-      // Optional filtering:
-      // formats: [BarcodeFormat.qr, BarcodeFormat.code128],
-    );
+  final outcome = await scanner.scan(
+    formats: const [BarcodeFormat.qr, BarcodeFormat.code128],
+  );
 
-    if (result == null) {
-      // Cancelled/permission denied
+  switch (outcome.type) {
+    case ScanOutcomeType.success:
+      final result = outcome.result!;
+      // Treat result.value as sensitive inert data. Do not log it.
       return;
-    }
-
-    // Use result.value and result.type
-    // Example: print(result.type.name);
-  } on PlatformException catch (e) {
-    // Handle errors by code/message
-    // Example: e.code == 'ALREADY_ACTIVE'
-    rethrow;
+    case ScanOutcomeType.cancelled:
+      return;
+    case ScanOutcomeType.permissionDenied:
+      // Offer an Android settings recovery path.
+      return;
+    case ScanOutcomeType.unavailable:
+    case ScanOutcomeType.busy:
+    case ScanOutcomeType.failure:
+      // Show an appropriate payload-free recovery message.
+      return;
   }
 }
 ```
@@ -185,12 +187,16 @@ Future<void> scanBarcode() async {
 - `ScanResult`
   - `value: String`
   - `type: BarcodeFormat`
+- `ScanOutcome`
+  - `type: ScanOutcomeType`
+  - `result: ScanResult?`, populated only for success
+  - `diagnosticCode: String?`, payload-free technical detail
 
 ### 6.4 Format filtering
 
-You can pass `formats: List<BarcodeFormat>`.
+You can pass QR, EAN-13, and Code 128 in `formats: List<BarcodeFormat>`.
 
-Note: iOS format support may be more limited than Android for some formats. If strict cross-platform filtering is critical, validate your chosen format list on both platforms.
+Omitting the list selects exactly those three formats. Empty or unsupported requests fail before scanner launch. Phase 2 supports Android only; existing iOS source is unverified and out of scope.
 
 ---
 

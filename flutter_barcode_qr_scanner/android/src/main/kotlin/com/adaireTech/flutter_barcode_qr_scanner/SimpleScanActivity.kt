@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.ViewGroup
 import android.view.Gravity
+import android.view.View
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -21,8 +23,13 @@ class SimpleScanActivity : AppCompatActivity() {
     companion object {
         private const val REQ_CAMERA = 2001
         const val EXTRA_FORMATS = "formats"
+        const val EXTRA_OUTCOME = "outcome"
         const val EXTRA_VALUE = "value"
         const val EXTRA_TYPE = "type"
+        private const val OUTCOME_SUCCESS = "success"
+        private const val OUTCOME_CANCELLED = "cancelled"
+        private const val OUTCOME_PERMISSION_DENIED = "permission_denied"
+        private const val OUTCOME_FAILURE = "failure"
     }
 
     private lateinit var barcodeView: BarcodeView
@@ -41,32 +48,91 @@ class SimpleScanActivity : AppCompatActivity() {
         val container = FrameLayout(this)
         container.addView(barcodeView)
 
-        // Flash toggle button (top-right)
-        val flashBtn = TextView(this).apply {
-            text = "Flash"
+        val closeButton = Button(this).apply {
+            text = "Close"
+            contentDescription = "Close scanner"
+            minWidth = dp(48)
+            minHeight = dp(48)
+            setOnClickListener { finishWithOutcome(OUTCOME_CANCELLED) }
+        }
+        container.addView(
+            closeButton,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                topMargin = dp(24)
+                leftMargin = dp(16)
+            },
+        )
+
+        val flashButton = Button(this).apply {
+            text = "Torch off"
+            contentDescription = "Turn torch on"
+            minWidth = dp(48)
+            minHeight = dp(48)
             setTextColor(0xFFFFFFFF.toInt())
             setBackgroundColor(0x66000000)
-            textSize = 14f
-            setPadding(20, 12, 20, 12)
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { gravity = Gravity.TOP or Gravity.END; topMargin = 24; rightMargin = 24 }
             setOnClickListener {
-                torchOn = !torchOn
-                setTorchSafe(torchOn)
-                text = if (torchOn) "Flash On" else "Flash"
+                val requestedState = !torchOn
+                if (setTorchSafe(requestedState)) {
+                    torchOn = requestedState
+                    text = if (torchOn) "Torch on" else "Torch off"
+                    contentDescription = if (torchOn) "Turn torch off" else "Turn torch on"
+                } else {
+                    text = "Torch unavailable"
+                    contentDescription = "Torch unavailable"
+                    isEnabled = false
+                    announceForAccessibility("Torch unavailable")
+                }
             }
         }
-        container.addView(flashBtn)
+        val hasTorch = packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_FLASH)
+        flashButton.visibility = if (hasTorch) View.VISIBLE else View.GONE
+        container.addView(
+            flashButton,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.TOP or Gravity.END
+                topMargin = dp(24)
+                rightMargin = dp(16)
+            },
+        )
+
+        val guidance = TextView(this).apply {
+            text = "Align a QR code, EAN-13 barcode, or Code 128 barcode in the camera view"
+            contentDescription = text
+            setTextColor(0xFFFFFFFF.toInt())
+            setBackgroundColor(0x99000000.toInt())
+            textSize = 16f
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            gravity = Gravity.CENTER
+        }
+        container.addView(
+            guidance,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.BOTTOM
+                leftMargin = dp(16)
+                rightMargin = dp(16)
+                bottomMargin = dp(24)
+            },
+        )
 
         setContentView(container)
 
         val keys = intent.getStringArrayListExtra(EXTRA_FORMATS)
         val formats = mapKeysToFormats(keys)
-        if (formats.isNotEmpty()) {
-            barcodeView.decoderFactory = DefaultDecoderFactory(formats)
+        if (formats.isEmpty()) {
+            finishWithOutcome(OUTCOME_FAILURE)
+            return
         }
+        barcodeView.decoderFactory = DefaultDecoderFactory(formats)
     }
 
     override fun onResume() {
@@ -92,7 +158,7 @@ class SimpleScanActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQ_CAMERA) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) startDecoding()
-            else finishCanceled()
+            else finishWithOutcome(OUTCOME_PERMISSION_DENIED)
         }
     }
 
@@ -106,6 +172,7 @@ class SimpleScanActivity : AppCompatActivity() {
                     val text = result?.text ?: return
                     handled = true
                     val data = Intent().apply {
+                        putExtra(EXTRA_OUTCOME, OUTCOME_SUCCESS)
                         putExtra(EXTRA_VALUE, text)
                         putExtra(EXTRA_TYPE, formatToKey(result.barcodeFormat))
                     }
@@ -122,25 +189,32 @@ class SimpleScanActivity : AppCompatActivity() {
     }
 
     override fun onBackPressed() {
-        finishCanceled()
+        finishWithOutcome(OUTCOME_CANCELLED)
     }
 
-    private fun finishCanceled() {
-        setResult(RESULT_CANCELED)
+    private fun finishWithOutcome(outcome: String) {
+        if (handled) return
+        handled = true
+        setResult(RESULT_CANCELED, Intent().putExtra(EXTRA_OUTCOME, outcome))
         finish()
     }
 
-    private fun setTorchSafe(on: Boolean) {
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
+
+    private fun setTorchSafe(on: Boolean): Boolean {
         try {
             val m = barcodeView.javaClass.getMethod("setTorch", Boolean::class.javaPrimitiveType)
             m.invoke(barcodeView, on)
+            return true
         } catch (_: Throwable) {
             try {
                 val name = if (on) "setTorchOn" else "setTorchOff"
                 val m2 = barcodeView.javaClass.getMethod(name)
                 m2.invoke(barcodeView)
+                return true
             } catch (_: Throwable) {
-                // Torch not supported; ignore
+                return false
             }
         }
     }
@@ -153,34 +227,14 @@ class SimpleScanActivity : AppCompatActivity() {
     private fun keyToFormat(key: String): BarcodeFormat? = when (key.lowercase()) {
         "qr" -> BarcodeFormat.QR_CODE
         "ean13" -> BarcodeFormat.EAN_13
-        "ean8" -> BarcodeFormat.EAN_8
         "code128" -> BarcodeFormat.CODE_128
-        "code39" -> BarcodeFormat.CODE_39
-        "code93" -> BarcodeFormat.CODE_93
-        "upca" -> BarcodeFormat.UPC_A
-        "upce" -> BarcodeFormat.UPC_E
-        "itf" -> BarcodeFormat.ITF
-        "codabar" -> BarcodeFormat.CODABAR
-        "datamatrix" -> BarcodeFormat.DATA_MATRIX
-        "aztec" -> BarcodeFormat.AZTEC
-        "pdf417" -> BarcodeFormat.PDF_417
         else -> null
     }
 
     private fun formatToKey(format: BarcodeFormat?): String = when (format) {
         BarcodeFormat.QR_CODE -> "qr"
         BarcodeFormat.EAN_13 -> "ean13"
-        BarcodeFormat.EAN_8 -> "ean8"
         BarcodeFormat.CODE_128 -> "code128"
-        BarcodeFormat.CODE_39 -> "code39"
-        BarcodeFormat.CODE_93 -> "code93"
-        BarcodeFormat.UPC_A -> "upca"
-        BarcodeFormat.UPC_E -> "upce"
-        BarcodeFormat.ITF -> "itf"
-        BarcodeFormat.CODABAR -> "codabar"
-        BarcodeFormat.DATA_MATRIX -> "datamatrix"
-        BarcodeFormat.AZTEC -> "aztec"
-        BarcodeFormat.PDF_417 -> "pdf417"
         else -> "unknown"
     }
 }

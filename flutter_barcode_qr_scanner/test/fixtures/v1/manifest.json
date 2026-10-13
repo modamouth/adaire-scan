@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "synthetic_only": true,
+  "fixtures": [
+    {
+      "id": "P2-QR-001",
+      "file": "qr.png",
+      "format": "qr",
+      "expected_value": "ADAIRE-P2-QR-001",
+      "sha256": "4293e65a22b3da7687b5e441e6ac6a1ad9bb8f997af5ab42f7c93677c5f0c435"
+    },
+    {
+      "id": "P2-EAN13-001",
+      "file": "ean13.png",
+      "format": "ean13",
+      "expected_value": "5901234123457",
+      "sha256": "139e44a2b81ae9f72d3e65a8ba85427ccd98464600e7be07dd9afb677a1c5ece"
+    },
+    {
+      "id": "P2-CODE128-001",
+      "file": "code128.png",
+      "format": "code128",
+      "expected_value": "ADAIRE-P2-C128-001",
+      "sha256": "21fef18688ce2e7e58f21c0a3c9b06beb9636bc7fdc0d329e548c4f18d775f10"
+    }
+  ]
+}

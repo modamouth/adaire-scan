@@ -8,7 +8,8 @@ abstract class FlutterBarcodeQrScannerPlatform extends PlatformInterface {
 
   static final Object _token = Object();
 
-  static FlutterBarcodeQrScannerPlatform _instance = MethodChannelFlutterBarcodeQrScanner();
+  static FlutterBarcodeQrScannerPlatform _instance =
+      MethodChannelFlutterBarcodeQrScanner();
 
   /// The default instance of [FlutterBarcodeQrScannerPlatform] to use.
   ///
@@ -29,9 +30,9 @@ abstract class FlutterBarcodeQrScannerPlatform extends PlatformInterface {
 
   /// Launch a native barcode/QR scanner UI.
   ///
-  /// Optionally filter by formats. Pass format keys like 'qr', 'ean13', 'code128'.
-  /// Returns a map with 'value' and 'type' (format key) or null if canceled.
-  Future<Map<String, dynamic>?> scan({List<String>? formats}) {
+  /// Pass the validated format keys 'qr', 'ean13', and/or 'code128'.
+  /// Returns one terminal outcome envelope.
+  Future<Map<String, dynamic>> scan({required List<String> formats}) {
     throw UnimplementedError('scan() has not been implemented.');
   }
 }

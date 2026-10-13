@@ -1,4 +1,3 @@
-import 'package:flutter/services.dart';
 import 'package:flutter_barcode_qr_scanner/flutter_barcode_qr_scanner.dart';
 
 class BarcodeScannerService {
@@ -7,11 +6,5 @@ class BarcodeScannerService {
   BarcodeScannerService({FlutterBarcodeQrScanner? scanner})
     : _scanner = scanner ?? FlutterBarcodeQrScanner();
 
-  Future<ScanResult?> scan() async {
-    try {
-      return await _scanner.scan();
-    } on PlatformException {
-      rethrow;
-    }
-  }
+  Future<ScanOutcome> scan() => _scanner.scan();
 }

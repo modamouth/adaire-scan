@@ -1,7 +1,7 @@
 name: flutter_barcode_qr_scanner
-description: "A new Flutter plugin project."
+description: "Private Android Barcode/QR evaluation plugin for QR, EAN-13, and Code 128 scanning."
 version: 0.0.2
-homepage:
+publish_to: none
 
 environment:
   sdk: ^3.9.2

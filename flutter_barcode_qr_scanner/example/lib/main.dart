@@ -18,7 +18,9 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   String _platformVersion = 'Unknown';
   final _scanner = FlutterBarcodeQrScanner();
+  final _scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
   ScanResult? _lastResult;
+  bool _isScanning = false;
 
   @override
   void initState() {
@@ -51,6 +53,7 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      scaffoldMessengerKey: _scaffoldMessengerKey,
       home: Scaffold(
         appBar: AppBar(title: const Text('Plugin example app')),
         body: Padding(
@@ -61,19 +64,34 @@ class _MyAppState extends State<MyApp> {
               Text('Running on: $_platformVersion'),
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: () async {
-                  try {
-                    final res = await _scanner.scan();
-                    if (!context.mounted) return;
-                    setState(() => _lastResult = res);
-                  } on PlatformException catch (e) {
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Scan failed: ${e.message}')),
-                    );
-                  }
-                },
-                child: const Text('Scan Barcode / QR'),
+                onPressed: _isScanning
+                    ? null
+                    : () async {
+                        setState(() => _isScanning = true);
+                        final outcome = await _scanner.scan();
+                        if (!context.mounted) return;
+                        setState(() {
+                          _isScanning = false;
+                          _lastResult = outcome.result;
+                        });
+                        if (!outcome.isSuccess) {
+                          final message = switch (outcome.type) {
+                            ScanOutcomeType.cancelled => 'Scan cancelled',
+                            ScanOutcomeType.permissionDenied =>
+                              'Camera permission denied. Enable it in Settings.',
+                            ScanOutcomeType.unavailable =>
+                              'Scanner unavailable on this device',
+                            ScanOutcomeType.busy =>
+                              'A scan is already in progress',
+                            ScanOutcomeType.failure => 'Scan failed',
+                            ScanOutcomeType.success => 'Scan completed',
+                          };
+                          _scaffoldMessengerKey.currentState?.showSnackBar(
+                            SnackBar(content: Text(message)),
+                          );
+                        }
+                      },
+                child: Text(_isScanning ? 'Scanning…' : 'Scan Barcode / QR'),
               ),
               const SizedBox(height: 24),
               Text(

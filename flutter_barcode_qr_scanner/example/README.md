@@ -1,6 +1,17 @@
-# flutter_barcode_qr_scanner_example
+# Flutter Barcode/QR Scanner Android Example
 
-Demonstrates how to use the flutter_barcode_qr_scanner plugin.
+Demonstrates the private Android candidate for QR, EAN-13, and Code 128.
+
+The example handles typed success, cancellation, permission-denied, unavailable, busy, and failure outcomes. It does not log decoded values. Use synthetic fixtures only.
+
+Run on an authorised Android device:
+
+```bash
+flutter pub get
+flutter run
+```
+
+This example is not evidence of iOS support, broad Android compatibility, production readiness, or permission to distribute the package.
 
 ## Getting Started
 

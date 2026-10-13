@@ -44,14 +44,23 @@ class _SdkShowcasePageState extends State<SdkShowcasePage>
 
   Future<void> _openBarcodeScanner() async {
     try {
-      final result = await _barcodeScanner.scan();
+      final outcome = await _barcodeScanner.scan();
       if (!mounted) return;
+      final result = outcome.result;
+      final outcomeMessage = switch (outcome.type) {
+        ScanOutcomeType.success =>
+          'Type: ${result!.type.name}\nValue: ${result.value}',
+        ScanOutcomeType.cancelled => 'Scan cancelled.',
+        ScanOutcomeType.permissionDenied =>
+          'Camera permission denied. Enable it in Settings and try again.',
+        ScanOutcomeType.unavailable => 'Scanner unavailable.',
+        ScanOutcomeType.busy => 'A scan is already in progress.',
+        ScanOutcomeType.failure => 'Scan failed.',
+      };
       await showResultDialog(
         context: context,
         title: 'Barcode / QR Result',
-        content: result == null
-            ? 'No data returned.'
-            : 'Type: ${result.type.name}\nValue: ${result.value}',
+        content: outcomeMessage,
       );
     } on PlatformException catch (e) {
       if (!mounted) return;
